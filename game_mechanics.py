@@ -94,6 +94,10 @@ class DeltaEnv(BaseWrapper):
         opponent = obs[:, :, 1].astype("int")
         return player - opponent
 
+    # @property
+    # def observation(self):
+    #     return self.env.last()[0]["observation"]
+
     @property
     def legal_moves(self):
         mask = self.env.last()[0]["action_mask"]

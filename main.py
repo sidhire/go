@@ -8,12 +8,20 @@ import time
 import random
 
 # from check_submission import check_submission
-from game_mechanics import GoEnv, choose_move_randomly, load_pkl, play_go, save_pkl
+from game_mechanics import GoEnv, choose_move_randomly, load_pkl, play_go, save_pkl, BOARD_SIZE
 
+import torch
 from torch import nn
+from torchinfo import summary
 
-from mcts.state import State
-from mcts.mcts import MCTS
+# from mcts.state import State
+# from mcts.mcts import MCTS
+from net import Net
+
+# PARAMETERS
+
+# NETWORK HYPERPARAMETERS
+
 
 TEAM_NAME = "OPEC"  # <---- Enter your team name here!
 assert TEAM_NAME != "Team Name", "Please change your TEAM_NAME!"
@@ -27,34 +35,55 @@ def train():
 
 
 
+network = Net(board_size=BOARD_SIZE)
+
+# Initialize lazy layers of the network by passing a dummy tensor of the correct shape through it.
+dummy_tensor = torch.rand(1, 1, BOARD_SIZE, BOARD_SIZE)
+_ = network(dummy_tensor)
+# summary(network, input_size=(1, 1, BOARD_SIZE, BOARD_SIZE))
 
 def choose_move(observation: np.ndarray, legal_moves: np.ndarray, neural_network: nn.Module) -> int:
-    # return choose_move_randomly(observation, legal_moves)
-    mcts = MCTS(
-        initial_state=State(observation, legal_moves),
-        rollout_policy=lambda x: random.choice(legal_moves),
-        explore_coeff=0.5,
-        verbose=False,
-    )
 
-    # Run episode loop
-    # for _ in range(100): # TODO do the timing
+    board_width = observation.shape[0]
+    observation = torch.tensor(observation, dtype=torch.float)
+    observation = observation.reshape(1, 1, board_width, board_width)
+
+    # TODO I left off at passing the correct shit to my network
+    # Will need to do legal move masking as well.
+
+    p, v = network(observation)
+    print(p.shape, v.shape)
+
+    # print("HI")
+    return choose_move_randomly(observation, legal_moves)
+
+
+    # CODE TO DO THIS WITH MCTS:
+    # mcts = MCTS(
+    #     initial_state=State(observation, legal_moves),
+    #     rollout_policy=lambda x: random.choice(legal_moves),
+    #     explore_coeff=0.5,
+    #     verbose=False,
+    # )
+
+    # # Run episode loop
+    # # for _ in range(100): # TODO do the timing
+    # #     mcts.do_rollout()
+
+    # time_budget = 0.4 # seconds
+    # start = time.time()
+    # elapsed_time = 0
+    # rollout_count = 0
+    # while elapsed_time < time_budget:
     #     mcts.do_rollout()
-
-    time_budget = 0.4 # seconds
-    start = time.time()
-    elapsed_time = 0
-    rollout_count = 0
-    while elapsed_time < time_budget:
-        mcts.do_rollout()
-        now = time.time()
-        elapsed_time = now - start
-        rollout_count += 1
-    # print("rollout_count =", rollout_count)
+    #     now = time.time()
+    #     elapsed_time = now - start
+    #     rollout_count += 1
+    # # print("rollout_count =", rollout_count)
 
 
-    action = mcts.choose_action()
-    return action
+    # action = mcts.choose_action()
+    # return action
 
 
 def play_n_games(n, your_choose_move=choose_move, opponent_choose_move=choose_move):
