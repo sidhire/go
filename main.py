@@ -48,7 +48,7 @@ def choose_move(observation: np.ndarray, legal_moves: np.ndarray, neural_network
     observation = torch.tensor(observation, dtype=torch.float)
     observation = observation.reshape(1, 1, board_width, board_width)
 
-    # TODO I left off at passing the correct shit to my network
+    # TODO TODO TODO I left off at passing the correct shit to my network
     # Will need to do legal move masking as well.
 
     p, v = network(observation)
