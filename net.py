@@ -1,7 +1,15 @@
+from lib2to3.pytree import convert
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchinfo import summary
+
+import numpy as np
+
+def convert_legal_moves_to_mask(legal_moves, board_size):
+    mask = torch.zeros(board_size * board_size + 1, dtype=torch.int)
+    mask.index_fill_(0, torch.tensor(legal_moves), 1)
+    return mask
 
 class Net(nn.Module):
 
@@ -19,6 +27,8 @@ class Net(nn.Module):
         num_non_shared_linear_layers = 3
         num_policy_output_dim = board_size * board_size + 1
         num_value_output_dim = 1
+
+        self.board_size = board_size
 
         self.shared_layers = nn.ModuleList()
         self.policy_layers = nn.ModuleList()
@@ -72,9 +82,10 @@ class Net(nn.Module):
         self.policy_layers.append(
             nn.LazyLinear(out_features=num_policy_output_dim)
         )
-        self.policy_layers.append(
-            nn.Softmax(dim=-1)
-        )
+        # NOTE Instead of adding the softmax here, we add it in the forward function so that we can do legal action masking.
+        # self.policy_layers.append(
+        #     nn.Softmax(dim=-1)
+        # )
 
         # ESTABLISH THE VALUE LAYERS
         for i in range(num_non_shared_linear_layers - 1):
@@ -88,13 +99,19 @@ class Net(nn.Module):
             nn.LazyLinear(out_features=num_value_output_dim)
         )
 
-    def forward(self, x):
+    def forward(self, observation, legal_moves):
+        x = observation
         for layer in self.shared_layers:
             x = layer(x)
 
         p = x
         for layer in self.policy_layers:
             p = layer(p)
+        # We do the softmax here instead of adding it as a layer so that we can do legal action masking. As described here: https://calm-silver-e6f.notion.site/6-Proximal-Policy-Optimization-PPO-3b5c45aa6ff34523a31ba08f3b324b23#4ccd589883eb4e05828b39dbc9fef135
+        mask = convert_legal_moves_to_mask(legal_moves, self.board_size)
+        p = F.softmax(p * mask)
+        p = p * mask
+        p = p / (p.sum() + 1e-13)
         
         v = x
         for layer in self.value_layers:

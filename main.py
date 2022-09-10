@@ -19,6 +19,7 @@ from torchinfo import summary
 from net import Net
 
 # PARAMETERS
+NUM_MOVES = BOARD_SIZE * BOARD_SIZE + 1
 
 # NETWORK HYPERPARAMETERS
 
@@ -38,8 +39,9 @@ def train():
 network = Net(board_size=BOARD_SIZE)
 
 # Initialize lazy layers of the network by passing a dummy tensor of the correct shape through it.
-dummy_tensor = torch.rand(1, 1, BOARD_SIZE, BOARD_SIZE)
-_ = network(dummy_tensor)
+dummy_observation = torch.rand(1, 1, BOARD_SIZE, BOARD_SIZE)
+dummy_legal_moves = np.arange(NUM_MOVES)
+_ = network(dummy_observation, dummy_legal_moves)
 # summary(network, input_size=(1, 1, BOARD_SIZE, BOARD_SIZE))
 
 def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
@@ -51,7 +53,7 @@ def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_ne
     # TODO TODO TODO I left off at passing the correct shit to my network
     # Will need to do legal move masking as well.
 
-    p, v = network(observation)
+    p, v = network(observation, legal_moves)
     print(p.shape, v.shape)
 
     # print("HI")
