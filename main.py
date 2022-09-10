@@ -39,26 +39,21 @@ def train():
 network = Net(board_size=BOARD_SIZE)
 
 # Initialize lazy layers of the network by passing a dummy tensor of the correct shape through it.
-dummy_observation = torch.rand(1, 1, BOARD_SIZE, BOARD_SIZE)
-dummy_legal_moves = np.arange(NUM_MOVES)
+dummy_observation = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=int)
+dummy_legal_moves = np.arange(NUM_MOVES, dtype=int)
 _ = network(dummy_observation, dummy_legal_moves)
 # summary(network, input_size=(1, 1, BOARD_SIZE, BOARD_SIZE))
 
 def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
-
-    board_width = observation.shape[0]
-    observation = torch.tensor(observation, dtype=torch.float)
-    observation = observation.reshape(1, 1, board_width, board_width)
-
-    # TODO TODO TODO I left off at passing the correct shit to my network
-    # Will need to do legal move masking as well.
-
-    p, v = network(observation, legal_moves)
-    print(p.shape, v.shape)
-
     # print("HI")
-    return choose_move_randomly(observation, legal_moves, env)
+    # return choose_move_randomly(observation, legal_moves, env)
 
+    # TODO Remove this line and actually pass in neural_network rather than using the global.
+    neural_network = network
+
+    p, v = neural_network(observation, legal_moves)
+    print(p.shape, v.shape)
+    return p.argmax().item()
 
     # CODE TO DO THIS WITH MCTS:
     # mcts = MCTS(

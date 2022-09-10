@@ -28,8 +28,6 @@ class Net(nn.Module):
         num_policy_output_dim = board_size * board_size + 1
         num_value_output_dim = 1
 
-        self.board_size = board_size
-
         self.shared_layers = nn.ModuleList()
         self.policy_layers = nn.ModuleList()
         self.value_layers = nn.ModuleList()
@@ -99,8 +97,14 @@ class Net(nn.Module):
             nn.LazyLinear(out_features=num_value_output_dim)
         )
 
+    # I think both observation and legal_moves can be either np arrays or tensors.
     def forward(self, observation, legal_moves):
-        x = observation
+
+        # TODO This feels like a bad abstraction...should probably be doing this transformation outside the forward function.
+        board_size = observation.shape[0]
+        x = torch.tensor(observation, dtype=torch.float)
+        x = x.reshape(1, 1, board_size, board_size)
+
         for layer in self.shared_layers:
             x = layer(x)
 
@@ -108,8 +112,8 @@ class Net(nn.Module):
         for layer in self.policy_layers:
             p = layer(p)
         # We do the softmax here instead of adding it as a layer so that we can do legal action masking. As described here: https://calm-silver-e6f.notion.site/6-Proximal-Policy-Optimization-PPO-3b5c45aa6ff34523a31ba08f3b324b23#4ccd589883eb4e05828b39dbc9fef135
-        mask = convert_legal_moves_to_mask(legal_moves, self.board_size)
-        p = F.softmax(p * mask)
+        mask = convert_legal_moves_to_mask(legal_moves, board_size)
+        p = F.softmax(p * mask, dim=-1)
         p = p * mask
         p = p / (p.sum() + 1e-13)
         
