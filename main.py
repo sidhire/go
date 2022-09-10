@@ -42,7 +42,7 @@ dummy_tensor = torch.rand(1, 1, BOARD_SIZE, BOARD_SIZE)
 _ = network(dummy_tensor)
 # summary(network, input_size=(1, 1, BOARD_SIZE, BOARD_SIZE))
 
-def choose_move(observation: np.ndarray, legal_moves: np.ndarray, neural_network: nn.Module) -> int:
+def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
 
     board_width = observation.shape[0]
     observation = torch.tensor(observation, dtype=torch.float)
@@ -55,7 +55,7 @@ def choose_move(observation: np.ndarray, legal_moves: np.ndarray, neural_network
     print(p.shape, v.shape)
 
     # print("HI")
-    return choose_move_randomly(observation, legal_moves)
+    return choose_move_randomly(observation, legal_moves, env)
 
 
     # CODE TO DO THIS WITH MCTS:
@@ -91,7 +91,7 @@ def play_n_games(n, your_choose_move=choose_move, opponent_choose_move=choose_mo
     def convert_to_no_network(choose_move_fn):
         if choose_move_fn == choose_move_randomly:
             return choose_move_randomly
-        return lambda o, l: choose_move_fn(o, l, network)
+        return lambda o, l, env: choose_move_fn(o, l, env, network)
     wins = 0
     print(f"Playing {n} games:")
     for i in tqdm(range(n)):
@@ -120,12 +120,12 @@ if __name__ == "__main__":
     # Code below plays a single game against a random
     #  opponent, think about how you might want to adapt this to
     #  test the performance of your algorithm.
-    def choose_move_no_network(observation: np.ndarray, legal_moves: np.ndarray) -> int:
+    def choose_move_no_network(observation: np.ndarray, legal_moves: np.ndarray, env) -> int:
         """The arguments in play_game() require functions that only take the state as input.
 
         This converts choose_move() to that format.
         """
-        return choose_move(observation, legal_moves, None)
+        return choose_move(observation, legal_moves, env, None)
         # return len(observation) ** 2
 
     # check_submission(

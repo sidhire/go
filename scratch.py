@@ -1,27 +1,28 @@
+# This is the version of game_mechanics for which the pettingzoo import works.
+
 import pickle
-import random
 import sys
-import time
-from copy import copy, deepcopy
-from dataclasses import dataclass
+
+from typing import Any
+
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
-
-import numpy as np
-import torch
-from gym.spaces import Box, Discrete
-from pygame import Surface
-from torch import nn
-
-# from pettingzoo.classic import go_v5
-from pettingzoo import go_v5
-from pettingzoo.utils import BaseWrapper
 
 HERE = Path(__file__).parent.resolve()
 
 # Hack as this won't pip install on replit
 sys.path.append(str(HERE / "PettingZoo"))
 
+import random
+import time
+from copy import deepcopy
+from typing import Callable, Dict
+
+import numpy as np
+from gym.spaces import Box, Discrete
+from torch import nn
+
+from pettingzoo import go_v5
+from pettingzoo.utils import BaseWrapper
 
 BOARD_SIZE = 9
 ALL_POSSIBLE_MOVES = np.arange(BOARD_SIZE**2 + 1)
@@ -53,7 +54,7 @@ def play_go(
     observation, reward, done, info = env.reset()
     done = False
     while not done:
-        action = your_choose_move(observation, info["legal_moves"], env=env)
+        action = your_choose_move(observation, info["legal_moves"])
         observation, reward, done, info = env.step(action)
     if render:
         time.sleep(100)
@@ -95,6 +96,10 @@ class DeltaEnv(BaseWrapper):
         opponent = obs[:, :, 1].astype("int")
         return player - opponent
 
+    # @property
+    # def observation(self):
+    #     return self.env.last()[0]["observation"]
+
     @property
     def legal_moves(self):
         mask = self.env.last()[0]["action_mask"]
@@ -109,10 +114,9 @@ class DeltaEnv(BaseWrapper):
     def done(self) -> bool:
         return self.env.last()[2]
 
-    def render_game(self, screen: Optional[Surface] = None) -> None:
+    def render_game(self) -> None:
 
-        self.env.render(screen_override=screen)
-
+        self.env.render()
         time.sleep(1 / self.game_speed_multiplier)
 
     def reset(self):
@@ -128,7 +132,7 @@ class DeltaEnv(BaseWrapper):
         if self.turn != self.player:
             self._step(
                 self.opponent_choose_move(
-                    observation=self.observation, legal_moves=self.legal_moves, env=self
+                    observation=self.observation, legal_moves=self.legal_moves
                 ),
             )
 
@@ -170,31 +174,25 @@ class DeltaEnv(BaseWrapper):
         if not self.done:
             opponent_reward = self._step(
                 self.opponent_choose_move(
-                    observation=self.observation, legal_moves=self.legal_moves, env=self
+                    observation=self.observation, legal_moves=self.legal_moves
                 ),
             )
             # Flipped as above
             reward = opponent_reward
 
         if self.done and self.verbose:
-            self.white_idx = int(self.turn_pretty == "white")
-            self.black_idx = int(self.turn_pretty == "black")
-            self.black_score = self.env.env.env.env.go_game.score()  # lol
-            self.player_score = (
-                self.black_score if self.player == "black_0" else self.black_score * -1
-            )
-            self.white_count = np.sum(
-                self.env.last()[0]["observation"].astype("int")[:, :, self.white_idx]
-            )
-            self.black_count = np.sum(
-                self.env.last()[0]["observation"].astype("int")[:, :, self.black_idx]
-            )
+            white_idx = int(self.turn_pretty == "white")
+            black_idx = int(self.turn_pretty == "black")
+            black_score = self.env.env.env.env.go_game.score()  # lol
+            player_score = black_score if self.player == "black_0" else black_score * -1
+            white_count = np.sum(self.env.last()[0]["observation"].astype("int")[:, :, white_idx])
+            black_count = np.sum(self.env.last()[0]["observation"].astype("int")[:, :, black_idx])
             print(
                 f"\nGame over. Reward = {reward}.\n"
                 f"Player was playing as {self.player[:-2]}.\n"
-                f"White has {self.white_count} counters.\n"
-                f"Black has {self.black_count} counters.\n"
-                f"Your score is {self.player_score}.\n"
+                f"White has {white_count} counters.\n"
+                f"Black has {black_count} counters.\n"
+                f"Your score is {player_score}.\n"
             )
 
         return self.observation, reward, self.done, self.info
@@ -215,11 +213,11 @@ def GoEnv(
     )
 
 
-def choose_move_randomly(observation, legal_moves, env):
-    return random.choice(legal_moves)
+def choose_move_randomly(observation, legal_moves):
+    return legal_moves[int(random.random() * len(legal_moves))]
 
 
-def choose_move_pass(observation, legal_moves, env) -> int:
+def choose_move_pass(observation, legal_moves) -> int:
     """passes on every turn."""
     return BOARD_SIZE**2
 
