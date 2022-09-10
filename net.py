@@ -11,6 +11,15 @@ def convert_legal_moves_to_mask(legal_moves, board_size):
     mask.index_fill_(0, torch.tensor(legal_moves), 1)
     return mask
 
+# As described here: https://calm-silver-e6f.notion.site/6-Proximal-Policy-Optimization-PPO-3b5c45aa6ff34523a31ba08f3b324b23#4ccd589883eb4e05828b39dbc9fef135
+def softmax_with_legal_move_masking(move_distribution, legal_moves, board_size):
+    mask = convert_legal_moves_to_mask(legal_moves, board_size)
+    move_distribution = F.softmax(move_distribution * mask, dim=-1)
+    move_distribution = move_distribution * mask
+    move_distribution = move_distribution / (move_distribution.sum() + 1e-13)
+    return move_distribution
+
+
 class Net(nn.Module):
 
     def __init__(self, board_size):
@@ -31,6 +40,8 @@ class Net(nn.Module):
         self.shared_layers = nn.ModuleList()
         self.policy_layers = nn.ModuleList()
         self.value_layers = nn.ModuleList()
+
+        self.cache = {}
 
         # ESTABLISH THE SHARED LAYERS
 
@@ -111,14 +122,33 @@ class Net(nn.Module):
         p = x
         for layer in self.policy_layers:
             p = layer(p)
-        # We do the softmax here instead of adding it as a layer so that we can do legal action masking. As described here: https://calm-silver-e6f.notion.site/6-Proximal-Policy-Optimization-PPO-3b5c45aa6ff34523a31ba08f3b324b23#4ccd589883eb4e05828b39dbc9fef135
-        mask = convert_legal_moves_to_mask(legal_moves, board_size)
-        p = F.softmax(p * mask, dim=-1)
-        p = p * mask
-        p = p / (p.sum() + 1e-13)
+        # We do the softmax here instead of adding it as a layer so that we can do legal action masking.
+        p = softmax_with_legal_move_masking(p, legal_moves, board_size)
         
         v = x
         for layer in self.value_layers:
             v = layer(v)
 
         return p, v
+    
+    def forward_with_cache(self, observation, legal_moves):
+        # If these assertions are false, need to rethink the hashing since .tobytes() works on np arrays but not on torch tensors.
+        assert type(observation) == np.ndarray
+        assert type(legal_moves) == np.ndarray
+
+        # Probably don't need to hash legal_moves since it is implicit in the observation.
+        # hash = observation.tobytes() + legal_moves.tobytes()
+        hash = observation.tobytes()
+
+        if hash in self.cache:
+            # print("Cache HITTTTTTTTTT!")
+            return self.cache[hash]
+        # else:
+        #     print("Cache miss")
+
+        result = self.forward(observation, legal_moves)
+        self.cache[hash] = result
+        return result
+    
+    def clear_cache(self):
+        self.cache = {}
