@@ -6,9 +6,11 @@ from torchinfo import summary
 
 import numpy as np
 
+from config import device
+
 def convert_legal_moves_to_mask(legal_moves, board_size):
-    mask = torch.zeros(board_size * board_size + 1, dtype=torch.int)
-    mask.index_fill_(0, torch.tensor(legal_moves), 1)
+    mask = torch.zeros(board_size * board_size + 1, dtype=torch.int, device=device)
+    mask.index_fill_(0, torch.tensor(legal_moves, device=device), 1)
     return mask
 
 # As described here: https://calm-silver-e6f.notion.site/6-Proximal-Policy-Optimization-PPO-3b5c45aa6ff34523a31ba08f3b324b23#4ccd589883eb4e05828b39dbc9fef135
@@ -113,7 +115,7 @@ class Net(nn.Module):
 
         # TODO This feels like a bad abstraction...should probably be doing this transformation outside the forward function.
         board_size = observation.shape[0]
-        x = torch.tensor(observation, dtype=torch.float)
+        x = torch.tensor(observation, dtype=torch.float, device=device)
         x = x.reshape(1, 1, board_size, board_size)
 
         for layer in self.shared_layers:

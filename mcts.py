@@ -15,6 +15,7 @@ from torchinfo import summary
 
 from game_mechanics import GoEnv, choose_move_randomly, play_go, transition_function, DeltaEnv
 from net import softmax_with_legal_move_masking
+from config import device
 
 
 # TODO
@@ -188,7 +189,7 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
 
     # Get a length-82 array of action values and softmax them to get a distribution
     board_size = observation.shape[0] # TODO Change if making 3D
-    pi = torch.zeros(board_size * board_size + 1)
+    pi = torch.zeros(board_size * board_size + 1, device=device)
     root_node = tree[root_hash]
     for move in root_node["legal_moves"]: # TODO Maybe guard against empty
         # children_hashes_in_parent_plus_move_to_node_tree 

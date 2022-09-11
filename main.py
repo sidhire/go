@@ -20,6 +20,8 @@ from torchinfo import summary
 from net import Net
 from mcts import mcts
 
+from config import device
+
 # PARAMETERS
 NUM_MOVES = BOARD_SIZE * BOARD_SIZE + 1
 NUM_MCTS_FOR_TRAINING = 20 # TODO Change to 1000
@@ -42,6 +44,7 @@ assert TEAM_NAME != "Team Name", "Please change your TEAM_NAME!"
 
 def initialize_network():
     network = Net(board_size=BOARD_SIZE)
+    network.to(device)
 
     # Initialize lazy layers of the network by passing a dummy tensor of the correct shape through it.
     dummy_observation = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=int)
@@ -84,6 +87,7 @@ def maybe_get_new_opponent(network, opponent_choose_move, opponent_network, env)
     else:
         print("REPLACING OPPONENT")
     new_opponent_network = deepcopy(network)
+    new_opponent_network.to(device)
     new_opponent_choose_move = opponent_choose_move_for_training
     # Need to re-establish the env because it has the opponent baked in.
     new_env = reestablish_env_in_training(opponent_choose_move=new_opponent_choose_move, opponent_network=new_opponent_network)
@@ -147,7 +151,7 @@ def train():
         
         # TODO Could optimize this.
         for _ in range(len(p_history)):
-            z_history.append(torch.tensor([reward], dtype=torch.float))
+            z_history.append(torch.tensor([reward], dtype=torch.float, device=device))
 
         # TODO Need to stack the lists into tensors
         p_loss = p_loss_fn(torch.stack(p_history), torch.stack(pi_history))
@@ -250,9 +254,11 @@ if __name__ == "__main__":
 
     ## Example workflow, feel free to edit this! ###
     file = train()
+    file.to("cpu") # TODO May have to change this
     save_pkl(file, TEAM_NAME)
 
     my_network = load_pkl(TEAM_NAME)
+    my_network.to(device) # TODO May have to change this for submission
 
     # Code below plays a single game against a random
     #  opponent, think about how you might want to adapt this to
