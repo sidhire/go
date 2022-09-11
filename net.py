@@ -29,12 +29,12 @@ class Net(nn.Module):
 
         # HYPERPARAMS
         # TODO pass all of these in as params
-        num_shared_conv_layers = 2 # 2
+        num_shared_conv_layers = 3 # 2
         conv_kernel_width = 3
         num_conv_kernels = 20 # 100
         pool_kernel_width = 3
         num_shared_linear_layers = 2 # 2
-        num_hidden_linear_layer_neurons = 10 # 100
+        num_hidden_linear_layer_neurons = 50 # 100
         num_non_shared_linear_layers = 2 # 3
         num_policy_output_dim = board_size * board_size + 1
         num_value_output_dim = 1

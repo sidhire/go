@@ -26,16 +26,17 @@ from config import device
 NUM_MOVES = BOARD_SIZE * BOARD_SIZE + 1
 NUM_MCTS_FOR_TRAINING = 50 # TODO Change to 1000
 
-NUM_MCTS_FOR_FINAL_TESTING = 100
+NUM_MCTS_FOR_FINAL_TESTING = 50
 NUM_GAMES_FOR_FINAL_TESTING = 100
 
 # Training params
-TRAINING_GAMES_TO_PLAY = 1000
-CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES = 10
+TRAINING_GAMES_TO_PLAY = 500
+CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES = 50
 LR = 1e-3
 GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
 WIN_PERCENTAGE_TO_REPLACE_OPPONENT = 0.6
 SAVE_CHECKPOINT_EVERY_N_GAMES = 100
+REGULARIZATION_PARAMETER = 1e-4
 
 # NETWORK HYPERPARAMETERS
 # Currently in the net.py file.
@@ -87,6 +88,7 @@ def copy_network_for_opponent(network):
 # Replace the opponent if you are better than them.
 def maybe_get_new_opponent(network, opponent_choose_move, opponent_network, env):
     print("--CHECKING IF BETTER THAN OPPONENT--")
+
     # If you are better than the opponent, then replace their choose_move function with one that uses a clone of your network.
     win_percentage = play_n_games(
         n=GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT,
@@ -96,19 +98,28 @@ def maybe_get_new_opponent(network, opponent_choose_move, opponent_network, env)
         opponent_network=opponent_network,
     )
     print(f"Won {win_percentage} games")
+
     better_than_opponent = win_percentage > WIN_PERCENTAGE_TO_REPLACE_OPPONENT
     if not better_than_opponent:
         return opponent_choose_move, opponent_network, env
+
     if opponent_choose_move == choose_move_randomly:
         print("****************REPLACING OPPONENT FOR THE FIRST TIME****************")
     else:
         print("****************REPLACING OPPONENT****************")
+
+    # This is a good network. Let's save it.
+    save_checkpoint_during_training(network)
+
     new_opponent_network = copy_network_for_opponent(network)
     new_opponent_network.to(device)
     new_opponent_choose_move = opponent_choose_move_for_training
+
     # Need to re-establish the env because it has the opponent baked in.
     new_env = reestablish_env_in_training(opponent_choose_move=new_opponent_choose_move, opponent_network=new_opponent_network)
+
     return new_opponent_choose_move, new_opponent_network, new_env
+
 
 def train(existing_network=None):
 
@@ -176,7 +187,9 @@ def train(existing_network=None):
         # Assert it is nonnegative (so we know whether to add a minus sign)
         assert p_loss >= 0
         assert v_loss >= 0
-        loss = p_loss + v_loss
+        params = torch.tensor(0.) # TODO SOMEHOW GET THE PARAMS
+        regularization_term = REGULARIZATION_PARAMETER * params.square().sum()
+        loss = p_loss + v_loss + regularization_term
 
         opt.zero_grad()
         loss.backward()
@@ -212,6 +225,7 @@ def opponent_choose_move_for_training(observation: np.ndarray, legal_moves: np.n
 def choose_move_without_mcts(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
     p, v = neural_network.forward_with_cache(observation, legal_moves)
     return p.argmax().item()
+
 
 def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
     # return choose_move_randomly(observation, legal_moves, env)
@@ -255,6 +269,7 @@ def convert_to_no_network(choose_move_fn, network):
         return choose_move_randomly
     return lambda observation, legal_moves, env: choose_move_fn(observation, legal_moves, env, network)
 
+
 def play_n_games(n, your_choose_move, your_network, opponent_choose_move, opponent_network, verbose=False):
     wins = 0
     iter = tqdm(range(n)) if verbose else range(n)
@@ -271,7 +286,9 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
         ) == 1 else 0
         # print(win)
         wins += win
-    win_percentage = wins / n
+        win_percentage = wins / n
+        if verbose:
+            print(f"So far winning {win_percentage:.2f} of games")
     if verbose:
         print(f"Won {win_percentage:.2f} of {n} games")
     return win_percentage
@@ -284,11 +301,11 @@ if __name__ == "__main__":
     existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
 
     ## Example workflow, feel free to edit this! ###
-    file = train(existing_network)
-    file.to("cpu") # TODO May have to change this
-    save_pkl(file, TEAM_NAME)
+    # file = train(existing_network)
+    # file.to("cpu") # TODO May have to change this
+    # save_pkl(file, TEAM_NAME)
 
-    my_network = load_pkl(TEAM_NAME)
+    my_network = load_pkl(TEAM_NAME + "_training_checkpoint")
     my_network.to(device) # TODO May have to change this for submission
 
     # Code below plays a single game against a random
