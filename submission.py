@@ -7,15 +7,52 @@ import time
 import random
 from copy import copy, deepcopy
 
+# from check_submission import check_submission
+from game_mechanics import GoEnv, choose_move_randomly, load_pkl, play_go, transition_function, BOARD_SIZE, DeltaEnv
+
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torchinfo import summary
 
-from game_mechanics import GoEnv, choose_move_randomly, play_go, transition_function, DeltaEnv
-from net import softmax_with_legal_move_masking
-from config import device
+TEAM_NAME = "OPEC"
 
+# PARAMETERS
+NUM_MCTS_FOR_FINAL_TESTING = 50
+NUM_GAMES_FOR_FINAL_TESTING = 100
+
+# Actually 5 but we shave off 0.5
+SECONDS_PER_MOVE_IN_COMPETITION = 4.5
+# TODO Change this
+# SECONDS_PER_MOVE_IN_COMPETITION = 0.1
+
+device = "cpu"
+
+###############################
+######## START net.py #########
+###############################
+
+def convert_legal_moves_to_mask(legal_moves, board_size):
+    mask = torch.zeros(board_size * board_size + 1, dtype=torch.int, device=device)
+    mask.index_fill_(0, torch.tensor(legal_moves, device=device), 1)
+    return mask
+
+# As described here: https://calm-silver-e6f.notion.site/6-Proximal-Policy-Optimization-PPO-3b5c45aa6ff34523a31ba08f3b324b23#4ccd589883eb4e05828b39dbc9fef135
+def softmax_with_legal_move_masking(move_distribution, legal_moves, board_size):
+    mask = convert_legal_moves_to_mask(legal_moves, board_size)
+    move_distribution = F.softmax(move_distribution * mask, dim=-1)
+    move_distribution = move_distribution * mask
+    move_distribution = move_distribution / (move_distribution.sum() + 1e-13)
+    return move_distribution
+
+#############################
+######## END net.py #########
+#############################
+
+
+################################
+######## START mcts.py #########
+################################
 
 def hash_board(board: np.ndarray, is_my_move: bool):
     board_hash = board.tobytes()
@@ -103,7 +140,16 @@ def select_node_randomly(tree: Dict, parent_plus_move_to_node_tree: Dict, root_h
     return node_hash
 
 
-def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv, network: nn.Module):
+def mcts(n_or_seconds: str, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv, network: nn.Module, n: int = None, seconds: float = None):
+    assert n_or_seconds in ["n", "seconds"]
+    assert n or seconds
+    assert not (n and seconds)
+
+    if seconds:
+        n = 1_000_000_000
+
+    start = time.time()
+    mcts_runs_count = 0
 
     tree = {}
     # Whereas the normal tree maps a hash(board + my turn) to a node, this tree maps hash(a parent state + the move taken) to the node. This is useful when you're trying to figure out whether all of a node's children are already in the tree.
@@ -119,11 +165,21 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
         move_that_got_you_here=None,
         node_env=env,
     )
+
+
     
     # print()
     # print(f"RUNNING {n} MCTS:")
     # for i in tqdm(range(n)):
-    for i in range(n):
+    for _ in range(n):
+
+        if seconds:
+            now = time.time()
+            elapsed_time = now - start
+            if elapsed_time > seconds:
+                break
+        
+        mcts_runs_count += 1
 
         # SELECT
         # TODO Use actual PUCT instead of random selection.
@@ -197,5 +253,111 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
     # TODO This mask shouldn't be necessary...there's probably a bug in my code. The MCTS should take care of not proposing any illegal moves......
     pi = softmax_with_legal_move_masking(pi, legal_moves, board_size)
 
+    print("mcts_runs_count", mcts_runs_count)
+
     # Return the distribution based on the tree (so I think get the child nodes of the current node based on their value... softmax maybe? Also need to do legal action masking? Or can that be taken care of upstream? I think upstream is better.)
     return pi
+
+################################
+######## END mcts.py #########
+################################
+
+
+################################
+######## START main.py #########
+################################
+
+# Version to be used in competition, which does a lot of mcts per move.
+def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
+    pi = mcts(
+        n_or_seconds="seconds",
+        observation=observation,
+        legal_moves=legal_moves,
+        env=env,
+        network=neural_network,
+        seconds=SECONDS_PER_MOVE_IN_COMPETITION,
+    )
+    return pi.argmax().item()
+    # return choose_move_randomly(observation, legal_moves, env)
+
+
+def choose_move_for_testing(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
+    pi = mcts(
+        n_or_seconds="n",
+        observation=observation,
+        legal_moves=legal_moves,
+        env=env,
+        network=neural_network,
+        n=NUM_MCTS_FOR_FINAL_TESTING
+    )
+    return pi.argmax().item()
+
+
+def convert_to_no_network(choose_move_fn, network):
+    if choose_move_fn == choose_move_randomly:
+        return choose_move_randomly
+    return lambda observation, legal_moves, env: choose_move_fn(observation, legal_moves, env, network)
+
+
+def play_n_games(n, your_choose_move, your_network, opponent_choose_move, opponent_network, verbose=False):
+    wins = 0
+    iter = tqdm(range(n)) if verbose else range(n)
+    if verbose:
+        print()
+        print(f"PLAYING {n} GAMES FOR TESTING. Opponent is {'RANDOM' if opponent_choose_move == choose_move_randomly else 'A NETWORK'}")
+    for i in iter:
+        win = 1 if play_go(
+            your_choose_move=convert_to_no_network(your_choose_move, your_network),
+            opponent_choose_move=convert_to_no_network(opponent_choose_move, opponent_network),
+            game_speed_multiplier=1,
+            render=False,
+            verbose=False,
+        ) == 1 else 0
+        # print(win)
+        wins += win
+        win_percentage = wins / (i + 1)
+        if verbose:
+            print(f"So far winning {win_percentage:.2f} of games")
+    if verbose:
+        print(f"Won {win_percentage:.2f} of {n} games")
+    return win_percentage
+
+
+# if __name__ == "__main__":
+def main():
+
+    my_network = load_pkl(TEAM_NAME)
+
+    def choose_move_no_network(observation: np.ndarray, legal_moves: np.ndarray, env) -> int:
+        return choose_move(observation, legal_moves, env, my_network)
+
+    # Test against a random opponent with limited MCTS
+    # play_n_games(
+    #     n=NUM_GAMES_FOR_FINAL_TESTING,
+    #     your_choose_move=choose_move_for_testing,
+    #     your_network=my_network,
+    #     opponent_choose_move=choose_move_randomly,
+    #     opponent_network=None,
+    #     verbose=True,
+    # )
+
+    # Testing with competition time for MCTS
+    play_n_games(
+        n=1,
+        your_choose_move=choose_move,
+        your_network=my_network,
+        opponent_choose_move=choose_move_randomly,
+        opponent_network=None,
+        verbose=True,
+    )
+
+    # TypeError: render() got an unexpected keyword argument 'screen_override'
+    # play_go(
+    #     your_choose_move=choose_move_no_network,
+    #     opponent_choose_move=choose_move_no_network,
+    #     game_speed_multiplier=10,
+    #     render=True,
+    #     verbose=False,
+    # )
+
+main()

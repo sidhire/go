@@ -285,7 +285,7 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
         ) == 1 else 0
         # print(win)
         wins += win
-        win_percentage = wins / n
+        win_percentage = wins / (i + 1)
         if verbose:
             print(f"So far winning {win_percentage:.2f} of games")
     if verbose:
@@ -295,14 +295,14 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
 
 if __name__ == "__main__":
 
-    # TODO Be sure you want this
-    TRAIN_FROM_SCRATCH = True
-    existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
+    # # TODO Be sure you want this
+    # TRAIN_FROM_SCRATCH = True
+    # existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
 
-    ## Example workflow, feel free to edit this! ###
-    file = train(existing_network)
-    # file.to("cpu") # TODO May have to change this
-    save_pkl(file, TEAM_NAME)
+    # ## Example workflow, feel free to edit this! ###
+    # file = train(existing_network)
+    # # file.to("cpu") # TODO May have to change this
+    # save_pkl(file, TEAM_NAME)
 
     # my_network = load_pkl(TEAM_NAME + "_training_checkpoint")
     my_network = load_pkl(TEAM_NAME)
