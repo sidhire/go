@@ -15,6 +15,8 @@ from torch import nn
 import torch.nn.functional as F
 from torchinfo import summary
 
+from statistics import mean
+
 TEAM_NAME = "OPEC"
 
 # PARAMETERS
@@ -24,7 +26,7 @@ NUM_GAMES_FOR_FINAL_TESTING = 100
 # Actually 5 but we shave off 0.5
 SECONDS_PER_MOVE_IN_COMPETITION = 4.5
 # TODO Change this
-# SECONDS_PER_MOVE_IN_COMPETITION = 0.1
+# SECONDS_PER_MOVE_IN_COMPETITION = 0.5
 
 device = "cpu"
 
@@ -166,8 +168,6 @@ def mcts(n_or_seconds: str, observation: np.ndarray, legal_moves: np.ndarray, en
         node_env=env,
     )
 
-
-    
     # print()
     # print(f"RUNNING {n} MCTS:")
     # for i in tqdm(range(n)):
@@ -241,19 +241,44 @@ def mcts(n_or_seconds: str, observation: np.ndarray, legal_moves: np.ndarray, en
     board_size = observation.shape[0] # TODO Change if making 3D
     pi = torch.zeros(board_size * board_size + 1, device=device)
     root_node = tree[root_hash]
+    moves_for_pi = [] # { move, rating, votes }
     for move in root_node["legal_moves"]: # TODO Maybe guard against empty
         # children_hashes_in_parent_plus_move_to_node_tree 
         child_hash_in_parent_plus_move_to_node_tree = hash_parent_plus_move(root_hash, move)
         child_was_explored_during_mcts = child_hash_in_parent_plus_move_to_node_tree in parent_plus_move_to_node_tree
         if child_was_explored_during_mcts:
             child = parent_plus_move_to_node_tree[child_hash_in_parent_plus_move_to_node_tree]
-            move_value = child["total_value"] / child["updated_count"]
-            pi[move] = move_value
+
+            # This way of getting the move's value is shitty because a node that was picked once and randomly estimated highly will show up at the top.
+            # move_value = child["total_value"] / child["updated_count"]
+            # Instead do it this way (https://stackoverflow.com/questions/1411199/what-is-a-better-way-to-sort-by-a-5-star-rating):
+
+            moves_for_pi.append({
+                "move": move,
+                "rating": (child["total_value"] / child["updated_count"]).item(),
+                "votes": child["updated_count"]
+            })
+            # rating = child["total_value"] / child["updated_count"] # average for the movie (mean)
+            # votes = child["updated_count"] # number of votes for the movie
+            # min_votes_needed = 1 # minimum votes required to be listed in the Top 250 (currently 25000)
+            # average_rating = None # the mean vote across the whole report (currently 7.0)
+            # move_value = (rating * votes + average_rating * min_votes_needed) / (votes + min_votes_needed)
+
+            # pi[move] = move_value
+    
+    average_rating = mean(move_for_pi_dict["rating"] * move_for_pi_dict["votes"] for move_for_pi_dict in moves_for_pi)
+    MIN_VOTES_NEEDED = 3 # minimum votes required to be listed in the Top 250 (currently 25000)
+    for move_for_pi_dict in moves_for_pi:
+        move = move_for_pi_dict["move"]
+        rating = move_for_pi_dict["rating"]
+        votes = move_for_pi_dict["votes"]
+        move_value = (rating * votes + average_rating * MIN_VOTES_NEEDED) / (votes + MIN_VOTES_NEEDED)
+        pi[move] = move_value
     
     # TODO This mask shouldn't be necessary...there's probably a bug in my code. The MCTS should take care of not proposing any illegal moves......
     pi = softmax_with_legal_move_masking(pi, legal_moves, board_size)
 
-    print("mcts_runs_count", mcts_runs_count)
+    # print("mcts_runs_count", mcts_runs_count)
 
     # Return the distribution based on the tree (so I think get the child nodes of the current node based on their value... softmax maybe? Also need to do legal action masking? Or can that be taken care of upstream? I think upstream is better.)
     return pi
@@ -327,29 +352,30 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
 def main():
 
     my_network = load_pkl(TEAM_NAME)
+    my_network.eval()
 
     def choose_move_no_network(observation: np.ndarray, legal_moves: np.ndarray, env) -> int:
         return choose_move(observation, legal_moves, env, my_network)
 
     # Test against a random opponent with limited MCTS
-    # play_n_games(
-    #     n=NUM_GAMES_FOR_FINAL_TESTING,
-    #     your_choose_move=choose_move_for_testing,
-    #     your_network=my_network,
-    #     opponent_choose_move=choose_move_randomly,
-    #     opponent_network=None,
-    #     verbose=True,
-    # )
-
-    # Testing with competition time for MCTS
     play_n_games(
-        n=1,
-        your_choose_move=choose_move,
+        n=NUM_GAMES_FOR_FINAL_TESTING,
+        your_choose_move=choose_move_for_testing,
         your_network=my_network,
         opponent_choose_move=choose_move_randomly,
         opponent_network=None,
         verbose=True,
     )
+
+    # Testing with competition time for MCTS
+    # play_n_games(
+    #     n=10,
+    #     your_choose_move=choose_move,
+    #     your_network=my_network,
+    #     opponent_choose_move=choose_move_randomly,
+    #     opponent_network=None,
+    #     verbose=True,
+    # )
 
     # TypeError: render() got an unexpected keyword argument 'screen_override'
     # play_go(

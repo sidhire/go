@@ -24,19 +24,24 @@ from config import device
 
 # PARAMETERS
 NUM_MOVES = BOARD_SIZE * BOARD_SIZE + 1
-NUM_MCTS_FOR_TRAINING = 50 # TODO Change to 1000
+NUM_MCTS_FOR_TRAINING = 25 # TODO Change to 1000
 
 NUM_MCTS_FOR_FINAL_TESTING = 50
 NUM_GAMES_FOR_FINAL_TESTING = 100
 
 # Training params
-TRAINING_GAMES_TO_PLAY = 2000 # 500 took like 2 hours, gonna leave overnight
+TRAINING_GAMES_TO_PLAY = 500 # 500 took like 2 hours, gonna leave overnight
 CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES = 50
 LR = 1e-3
 GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
 WIN_PERCENTAGE_TO_REPLACE_OPPONENT = 0.6
 SAVE_CHECKPOINT_EVERY_N_GAMES = 100
 REGULARIZATION_PARAMETER = 1e-4
+
+# Actually 5 but we shave off 0.5
+# SECONDS_PER_MOVE_IN_COMPETITION = 4.5
+# TODO Change this
+SECONDS_PER_MOVE_IN_COMPETITION = 0.1
 
 # NETWORK HYPERPARAMETERS
 # Currently in the net.py file.
@@ -153,9 +158,7 @@ def train(existing_network=None):
             moves_in_game += 1
 
             p, v = network.forward_with_cache(observation, legal_moves)
-            # TODO Actually write the mcts
-            pi = mcts(n=NUM_MCTS_FOR_TRAINING, observation=observation, legal_moves=legal_moves, env=env, network=network)
-            # pi = p # Noop to test training code
+            pi = mcts(n_or_seconds="n", n=NUM_MCTS_FOR_TRAINING, observation=observation, legal_moves=legal_moves, env=env, network=network)
 
             p_history.append(p)
             pi_history.append(pi)
@@ -201,14 +204,15 @@ def train(existing_network=None):
             # We are reassigning these variables which are defined above.
             opponent_choose_move, opponent_network, env = maybe_get_new_opponent(network, opponent_choose_move=opponent_choose_move, opponent_network=opponent_network, env=env)
         
-        if game_idx % SAVE_CHECKPOINT_EVERY_N_GAMES == 0:
-            save_checkpoint_during_training(network)
+        # if game_idx % SAVE_CHECKPOINT_EVERY_N_GAMES == 0:
+        #     save_checkpoint_during_training(network)
     
     return network
 
 
 def save_checkpoint_during_training(network):
     filename = f"{TEAM_NAME}_training_checkpoint"
+    print(f"Saving checkpoint named {filename}")
     # TODO May need something like this if using GPU, but it would impede training.
     # file.to("cpu")
     save_pkl(network, filename)
@@ -225,42 +229,30 @@ def choose_move_without_mcts(observation: np.ndarray, legal_moves: np.ndarray, e
     p, v = neural_network.forward_with_cache(observation, legal_moves)
     return p.argmax().item()
 
-
+# Version to be used in competition, which does a lot of mcts per move.
 def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
-    # return choose_move_randomly(observation, legal_moves, env)
-    pi = mcts(n=NUM_MCTS_FOR_FINAL_TESTING, observation=observation, legal_moves=legal_moves, env=env, network=neural_network)
+    pi = mcts(
+        n_or_seconds="seconds",
+        observation=observation,
+        legal_moves=legal_moves,
+        env=env,
+        network=neural_network,
+        seconds=SECONDS_PER_MOVE_IN_COMPETITION,
+    )
     return pi.argmax().item()
-
-    # TODO Use MCTS to improve this move before returning a move.
-    # p, v = neural_network.forward_with_cache(observation, legal_moves)
-    # return p.argmax().item()
-
-    # CODE TO DO THIS WITH MCTS:
-    # mcts = MCTS(
-    #     initial_state=State(observation, legal_moves),
-    #     rollout_policy=lambda x: random.choice(legal_moves),
-    #     explore_coeff=0.5,
-    #     verbose=False,
-    # )
-
-    # # Run episode loop
-    # # for _ in range(100): # TODO do the timing
-    # #     mcts.do_rollout()
-
-    # time_budget = 0.4 # seconds
-    # start = time.time()
-    # elapsed_time = 0
-    # rollout_count = 0
-    # while elapsed_time < time_budget:
-    #     mcts.do_rollout()
-    #     now = time.time()
-    #     elapsed_time = now - start
-    #     rollout_count += 1
-    # # print("rollout_count =", rollout_count)
+    # return choose_move_randomly(observation, legal_moves, env)
 
 
-    # action = mcts.choose_action()
-    # return action
+def choose_move_for_testing(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
+    pi = mcts(
+        n_or_seconds="n",
+        observation=observation,
+        legal_moves=legal_moves,
+        env=env,
+        network=neural_network,
+        n=NUM_MCTS_FOR_FINAL_TESTING
+    )
+    return pi.argmax().item()
 
 
 def convert_to_no_network(choose_move_fn, network):
@@ -296,16 +288,16 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
 if __name__ == "__main__":
 
     # # TODO Be sure you want this
-    # TRAIN_FROM_SCRATCH = True
-    # existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
+    TRAIN_FROM_SCRATCH = True
+    existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
 
     # ## Example workflow, feel free to edit this! ###
-    # file = train(existing_network)
+    file = train(existing_network)
     # # file.to("cpu") # TODO May have to change this
-    # save_pkl(file, TEAM_NAME)
+    save_pkl(file, TEAM_NAME)
 
     # my_network = load_pkl(TEAM_NAME + "_training_checkpoint")
-    my_network = load_pkl(TEAM_NAME)
+    my_network = load_pkl(TEAM_NAME + "_long_training_not_good")
     my_network.to(device) # TODO May have to change this for submission
 
     # Code below plays a single game against a random

@@ -16,6 +16,8 @@ from game_mechanics import GoEnv, choose_move_randomly, play_go, transition_func
 from net import softmax_with_legal_move_masking
 from config import device
 
+from statistics import mean
+
 
 def hash_board(board: np.ndarray, is_my_move: bool):
     board_hash = board.tobytes()
@@ -103,7 +105,16 @@ def select_node_randomly(tree: Dict, parent_plus_move_to_node_tree: Dict, root_h
     return node_hash
 
 
-def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv, network: nn.Module):
+def mcts(n_or_seconds: str, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv, network: nn.Module, n: int = None, seconds: float = None):
+    assert n_or_seconds in ["n", "seconds"]
+    assert n or seconds
+    assert not (n and seconds)
+
+    if seconds:
+        n = 1_000_000_000
+
+    start = time.time()
+    mcts_runs_count = 0
 
     tree = {}
     # Whereas the normal tree maps a hash(board + my turn) to a node, this tree maps hash(a parent state + the move taken) to the node. This is useful when you're trying to figure out whether all of a node's children are already in the tree.
@@ -119,11 +130,19 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
         move_that_got_you_here=None,
         node_env=env,
     )
-    
+
     # print()
     # print(f"RUNNING {n} MCTS:")
     # for i in tqdm(range(n)):
-    for i in range(n):
+    for _ in range(n):
+
+        if seconds:
+            now = time.time()
+            elapsed_time = now - start
+            if elapsed_time > seconds:
+                break
+        
+        mcts_runs_count += 1
 
         # SELECT
         # TODO Use actual PUCT instead of random selection.
@@ -185,17 +204,45 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
     board_size = observation.shape[0] # TODO Change if making 3D
     pi = torch.zeros(board_size * board_size + 1, device=device)
     root_node = tree[root_hash]
+    moves_for_pi = [] # { move, rating, votes }
     for move in root_node["legal_moves"]: # TODO Maybe guard against empty
         # children_hashes_in_parent_plus_move_to_node_tree 
         child_hash_in_parent_plus_move_to_node_tree = hash_parent_plus_move(root_hash, move)
         child_was_explored_during_mcts = child_hash_in_parent_plus_move_to_node_tree in parent_plus_move_to_node_tree
         if child_was_explored_during_mcts:
             child = parent_plus_move_to_node_tree[child_hash_in_parent_plus_move_to_node_tree]
-            move_value = child["total_value"] / child["updated_count"]
-            pi[move] = move_value
+
+            # This way of getting the move's value is shitty because a node that was picked once and randomly estimated highly will show up at the top.
+            # move_value = child["total_value"] / child["updated_count"]
+            # Instead do it this way (https://stackoverflow.com/questions/1411199/what-is-a-better-way-to-sort-by-a-5-star-rating):
+
+            moves_for_pi.append({
+                "move": move,
+                "rating": (child["total_value"] / child["updated_count"]).item(),
+                "votes": child["updated_count"]
+            })
+            # rating = child["total_value"] / child["updated_count"] # average for the movie (mean)
+            # votes = child["updated_count"] # number of votes for the movie
+            # min_votes_needed = 1 # minimum votes required to be listed in the Top 250 (currently 25000)
+            # average_rating = None # the mean vote across the whole report (currently 7.0)
+            # move_value = (rating * votes + average_rating * min_votes_needed) / (votes + min_votes_needed)
+
+            # pi[move] = move_value
+    
+    average_rating = mean(move_for_pi_dict["rating"] * move_for_pi_dict["votes"] for move_for_pi_dict in moves_for_pi)
+    MIN_VOTES_NEEDED = 3 # minimum votes required to be listed in the Top 250 (currently 25000)
+    for move_for_pi_dict in moves_for_pi:
+        move = move_for_pi_dict["move"]
+        rating = move_for_pi_dict["rating"]
+        votes = move_for_pi_dict["votes"]
+        move_value = (rating * votes + average_rating * MIN_VOTES_NEEDED) / (votes + MIN_VOTES_NEEDED)
+        pi[move] = move_value
     
     # TODO This mask shouldn't be necessary...there's probably a bug in my code. The MCTS should take care of not proposing any illegal moves......
     pi = softmax_with_legal_move_masking(pi, legal_moves, board_size)
 
+    # print("mcts_runs_count", mcts_runs_count)
+
     # Return the distribution based on the tree (so I think get the child nodes of the current node based on their value... softmax maybe? Also need to do legal action masking? Or can that be taken care of upstream? I think upstream is better.)
     return pi
+
