@@ -24,17 +24,18 @@ from config import device
 
 # PARAMETERS
 NUM_MOVES = BOARD_SIZE * BOARD_SIZE + 1
-NUM_MCTS_FOR_TRAINING = 100 # TODO Change to 1000
+NUM_MCTS_FOR_TRAINING = 50 # TODO Change to 1000
 
 NUM_MCTS_FOR_FINAL_TESTING = 100
-NUM_GAMES_FOR_FINAL_TESTING = 1
+NUM_GAMES_FOR_FINAL_TESTING = 100
 
 # Training params
 TRAINING_GAMES_TO_PLAY = 1000
-REPLACE_OPPONENT_EVERY_N_GAMES = 10
+CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES = 10
 LR = 1e-3
 GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
-WIN_PERCENTAGE_TO_REPLACE_OPPONENT = 0.55
+WIN_PERCENTAGE_TO_REPLACE_OPPONENT = 0.6
+SAVE_CHECKPOINT_EVERY_N_GAMES = 100
 
 # NETWORK HYPERPARAMETERS
 # Currently in the net.py file.
@@ -56,8 +57,8 @@ def initialize_network():
 
 
 def reestablish_env_in_training(opponent_choose_move, opponent_network):
-    if opponent_choose_move != choose_move_randomly:
-        print("NO FUNCTION PROBLEM! OCM IS SOMETHING OTHER THAN RANDOM. THIS IS GOOD!")
+    # if opponent_choose_move != choose_move_randomly:
+    #     print("NO FUNCTION PROBLEM! OCM IS SOMETHING OTHER THAN RANDOM. THIS IS GOOD!")
     return GoEnv(
         convert_to_no_network(opponent_choose_move, opponent_network),
         verbose=False,
@@ -68,9 +69,22 @@ def reestablish_env_in_training(opponent_choose_move, opponent_network):
     )
 
 
+def copy_network_for_opponent(network):
+    # This didn't work for me. I got this error in some cases:
+    # RuntimeError: Only Tensors created explicitly by the user (graph leaves) support the deepcopy protocol at the moment
+    # return deepcopy(network)
+    filepath = "temp_for_copying.pt"
+    torch.save(network.state_dict(), filepath)
+    new_network = initialize_network()
+    new_network.load_state_dict(torch.load(filepath))
+    # Opponent's network is not going to be trained. This probably doesn't matter though.
+    new_network.eval()
+    return new_network
+
+
 # Replace the opponent if you are better than them.
 def maybe_get_new_opponent(network, opponent_choose_move, opponent_network, env):
-    print("CHECKING IF BETTER THAN OPPONENT")
+    print("--CHECKING IF BETTER THAN OPPONENT--")
     # If you are better than the opponent, then replace their choose_move function with one that uses a clone of your network.
     win_percentage = play_n_games(
         n=GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT,
@@ -79,23 +93,24 @@ def maybe_get_new_opponent(network, opponent_choose_move, opponent_network, env)
         opponent_choose_move=opponent_choose_move,
         opponent_network=opponent_network,
     )
-    better_than_opponent = win_percentage > GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT
+    print(f"Won {win_percentage} games")
+    better_than_opponent = win_percentage > WIN_PERCENTAGE_TO_REPLACE_OPPONENT
     if not better_than_opponent:
         return opponent_choose_move, opponent_network, env
     if opponent_choose_move == choose_move_randomly:
-        print("REPLACING OPPONENT FOR THE FIRST TIME")
+        print("****************REPLACING OPPONENT FOR THE FIRST TIME****************")
     else:
-        print("REPLACING OPPONENT")
-    new_opponent_network = deepcopy(network)
+        print("****************REPLACING OPPONENT****************")
+    new_opponent_network = copy_network_for_opponent(network)
     new_opponent_network.to(device)
     new_opponent_choose_move = opponent_choose_move_for_training
     # Need to re-establish the env because it has the opponent baked in.
     new_env = reestablish_env_in_training(opponent_choose_move=new_opponent_choose_move, opponent_network=new_opponent_network)
     return new_opponent_choose_move, new_opponent_network, new_env
 
-def train():
+def train(existing_network=None):
 
-    network = initialize_network()
+    network = existing_network if existing_network else initialize_network()
     # opponent_network = None
 
     p_loss_fn = nn.CrossEntropyLoss()
@@ -167,12 +182,22 @@ def train():
         # Need to clear the network cache after you train...would be nice to just hook into that but need to research that.
         network.clear_cache()
 
-        should_check_if_better_than_opponent = game_idx % 20 == 0
+        should_check_if_better_than_opponent = game_idx % CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES == 0
         if should_check_if_better_than_opponent:
             # We are reassigning these variables which are defined above.
             opponent_choose_move, opponent_network, env = maybe_get_new_opponent(network, opponent_choose_move=opponent_choose_move, opponent_network=opponent_network, env=env)
+        
+        if game_idx % SAVE_CHECKPOINT_EVERY_N_GAMES == 0:
+            save_checkpoint_during_training(network)
     
     return network
+
+
+def save_checkpoint_during_training(network):
+    filename = f"{TEAM_NAME}_training_checkpoint"
+    # TODO May need something like this if using GPU, but it would impede training.
+    # file.to("cpu")
+    save_pkl(file, filename)
 
 
 def opponent_choose_move_for_training(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
@@ -233,7 +258,7 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
     iter = tqdm(range(n)) if verbose else range(n)
     if verbose:
         print()
-        print(f"PLAYING {n} GAMES FOR TESTING:")
+        print(f"PLAYING {n} GAMES FOR TESTING. Opponent is {'RANDOM' if opponent_choose_move == choose_move_randomly else 'A NETWORK'}")
     for i in iter:
         win = 1 if play_go(
             your_choose_move=convert_to_no_network(your_choose_move, your_network),
@@ -252,8 +277,12 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
 
 if __name__ == "__main__":
 
+    # TODO Be sure you want this
+    TRAIN_FROM_SCRATCH = True
+    existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
+
     ## Example workflow, feel free to edit this! ###
-    file = train()
+    file = train(existing_network)
     file.to("cpu") # TODO May have to change this
     save_pkl(file, TEAM_NAME)
 
