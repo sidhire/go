@@ -52,10 +52,10 @@ class Net(nn.Module):
             )
 
             # NOTE BatchNorm requires there to be a batch dimension (I think), so you have to reshape your board from the 1x9x9 required for conv layers to instead a 1x1x9x9.
-            self.shared_layers.append(
-                nn.LazyBatchNorm2d()
-                # nn.BatchNorm2d(num_features=num_conv_kernels)
-            )
+            # TODO BatchNorm is slow per my profiling. Re-enable it if I'm running on a GPU.
+            # self.shared_layers.append(
+            #     nn.LazyBatchNorm2d() # nn.BatchNorm2d(num_features=num_conv_kernels)
+            # )
 
             self.shared_layers.append(
                 nn.ReLU()

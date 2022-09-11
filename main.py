@@ -24,7 +24,15 @@ from mcts import mcts
 NUM_MOVES = BOARD_SIZE * BOARD_SIZE + 1
 NUM_MCTS_FOR_TRAINING = 20 # TODO Change to 1000
 
-NUM_MCTS_FOR_TESTING = 100
+NUM_MCTS_FOR_FINAL_TESTING = 20
+NUM_GAMES_FOR_FINAL_TESTING = 100
+
+# Training params
+TRAINING_GAMES_TO_PLAY = 1000
+REPLACE_OPPONENT_EVERY_N_GAMES = 10
+LR = 1e-3
+GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
+WIN_PERCENTAGE_TO_REPLACE_OPPONENT = 0.55
 
 # NETWORK HYPERPARAMETERS
 
@@ -43,14 +51,45 @@ def initialize_network():
 
     return network
 
+
+def reestablish_env_in_training(opponent_choose_move, opponent_network):
+    if opponent_choose_move != choose_move_randomly:
+        print("NO FUNCTION PROBLEM! OCM IS SOMETHING OTHER THAN RANDOM. THIS IS GOOD!")
+    return GoEnv(
+        convert_to_no_network(opponent_choose_move, opponent_network),
+        verbose=False,
+        # TODO Pass stuff through for this
+        # verbose=long_games_count > 2,
+        render=False,
+        game_speed_multiplier=1,
+    )
+
+
+# Replace the opponent if you are better than them.
+def maybe_get_new_opponent(network, opponent_choose_move, opponent_network, env):
+    print("CHECKING IF BETTER THAN OPPONENT")
+    # If you are better than the opponent, then replace their choose_move function with one that uses a clone of your network.
+    win_percentage = play_n_games(
+        n=GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT,
+        your_choose_move=choose_move_without_mcts,
+        your_network=network,
+        opponent_choose_move=opponent_choose_move,
+        opponent_network=opponent_network,
+    )
+    better_than_opponent = win_percentage > GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT
+    if not better_than_opponent:
+        return opponent_choose_move, opponent_network, env
+    if opponent_choose_move == choose_move_randomly:
+        print("REPLACING OPPONENT FOR THE FIRST TIME")
+    else:
+        print("REPLACING OPPONENT")
+    new_opponent_network = deepcopy(network)
+    new_opponent_choose_move = opponent_choose_move_for_training
+    # Need to re-establish the env because it has the opponent baked in.
+    new_env = reestablish_env_in_training(opponent_choose_move=new_opponent_choose_move, opponent_network=new_opponent_network)
+    return new_opponent_choose_move, new_opponent_network, new_env
+
 def train():
-
-    GAMES_TO_PLAY = 100
-    REPLACE_OPPONENT_EVERY_N_GAMES = 10
-    LR = 1e-3
-
-    GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
-    WIN_PERCENTAGE_TO_REPLACE_OPPONENT = 0.55
 
     network = initialize_network()
     # opponent_network = None
@@ -64,60 +103,11 @@ def train():
     # Opponent starts as random, and we only replace it when we are able to beat it.
     opponent_choose_move = choose_move_randomly
     opponent_network = None
-
-    # def test_against_opponent():
-    #     # TODO Use choose_move_without_mcts
-    # def play_n_games(n, your_choose_move, your_network, opponent_choose_move, opponent_network):
-
-    # # TODO Only replace the opponent if you are better than them.
-    # def should_replace_opponent(game_idx):
-    #     if not opponent_network:
-    #         return True
-    #     return game_idx % REPLACE_OPPONENT_EVERY_N_GAMES == 0
-    # if should_replace_opponent(game_idx=game_idx):
-    #     print("REPLACING OPPONENT")
-    #     opponent_network = deepcopy(network)
-    #     env = GoEnv(
-    #         convert_to_no_network(opponent_choose_move_for_training, opponent_network),
-    #         # verbose=False,
-    #         verbose=long_games_count > 2,
-    #         render=False,
-    #         game_speed_multiplier=1,
-    #     )
-
-    # Replace the opponent if you are better than them.
-    def maybe_replace_opponent(network):
-        # If you are better than the opponent, then replace their choose_move function with one that uses a clone of your network.
-        win_percentage = play_n_games(
-            n=GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT,
-            your_choose_move=choose_move_without_mcts,
-            your_network=network,
-            # TODO I'm unsure if this will get updated since I'm defining the function up top...guess we'll see.
-            opponent_choose_move=opponent_choose_move,
-            opponent_network=opponent_network,
-        )
-        better_than_opponent = win_percentage > GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT
-        if not better_than_opponent:
-            return
-        if opponent_choose_move == choose_move_randomly:
-            print("REPLACING OPPONENT FOR THE FIRST TIME")
-        else:
-            print("REPLACING OPPONENT")
-        opponent_network = deepcopy(network)
-        opponent_choose_move = opponent_choose_move_for_training
-        # Need to re-establish the env because it has the opponent baked in.
-        env = GoEnv(
-            convert_to_no_network(opponent_choose_move, opponent_network),
-            # verbose=False,
-            verbose=long_games_count > 2,
-            render=False,
-            game_speed_multiplier=1,
-        )
-        
+    env = reestablish_env_in_training(opponent_choose_move=opponent_choose_move, opponent_network=opponent_network)
 
     print()
-    print(f"PLAYING {GAMES_TO_PLAY} GAMES FOR TRAINING:")
-    for game_idx in tqdm(range(GAMES_TO_PLAY)):
+    print(f"PLAYING {TRAINING_GAMES_TO_PLAY} GAMES FOR TRAINING:")
+    for game_idx in tqdm(range(TRAINING_GAMES_TO_PLAY)):
         
         p_history, pi_history, v_history, z_history = [], [], [], []
         
@@ -172,32 +162,14 @@ def train():
         opt.step()
         # Need to clear the network cache after you train...would be nice to just hook into that but need to research that.
         network.clear_cache()
+
+        should_check_if_better_than_opponent = game_idx % 20 == 0
+        if should_check_if_better_than_opponent:
+            # We are reassigning these variables which are defined above.
+            opponent_choose_move, opponent_network, env = maybe_get_new_opponent(network, opponent_choose_move=opponent_choose_move, opponent_network=opponent_network, env=env)
     
     return network
 
-        
-
-    #     win = 1 if play_go(
-    #         your_choose_move=convert_to_no_network(your_choose_move),
-    #         opponent_choose_move=convert_to_no_network(opponent_choose_move),
-    #         game_speed_multiplier=1,
-    #         render=False,
-    #         verbose=False,
-    #     ) == 1 else 0
-
-    # observation, reward, done, info = env.reset()
-    # done = False
-    # while not done:
-    #     action = your_choose_move(observation, info["legal_moves"], env=env)
-    #     observation, reward, done, info = env.step(action)
-    # if render:
-    #     time.sleep(100)
-    # return reward
-
-    # return nn.Sequential(
-    #     nn.Linear(1, 1)
-    # )
-    # # raise NotImplementedError()
 
 def opponent_choose_move_for_training(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
     p, v = neural_network.forward_with_cache(observation, legal_moves)
@@ -212,11 +184,11 @@ def choose_move_without_mcts(observation: np.ndarray, legal_moves: np.ndarray, e
 
 def choose_move(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:
     # return choose_move_randomly(observation, legal_moves, env)
-    # p, v = neural_network.forward_with_cache(observation, legal_moves)
-    pi = mcts(n=NUM_MCTS_FOR_TESTING, observation=observation, legal_moves=legal_moves, env=env, network=neural_network)
+    pi = mcts(n=NUM_MCTS_FOR_FINAL_TESTING, observation=observation, legal_moves=legal_moves, env=env, network=neural_network)
     return pi.argmax().item()
 
     # TODO Use MCTS to improve this move before returning a move.
+    # p, v = neural_network.forward_with_cache(observation, legal_moves)
     # return p.argmax().item()
 
     # CODE TO DO THIS WITH MCTS:
@@ -252,11 +224,13 @@ def convert_to_no_network(choose_move_fn, network):
         return choose_move_randomly
     return lambda observation, legal_moves, env: choose_move_fn(observation, legal_moves, env, network)
 
-def play_n_games(n, your_choose_move, your_network, opponent_choose_move, opponent_network):
+def play_n_games(n, your_choose_move, your_network, opponent_choose_move, opponent_network, verbose=False):
     wins = 0
-    print()
-    print(f"PLAYING {n} GAMES FOR TESTING:")
-    for i in tqdm(range(n)):
+    iter = tqdm(range(n)) if verbose else range(n)
+    if verbose:
+        print()
+        print(f"PLAYING {n} GAMES FOR TESTING:")
+    for i in iter:
         win = 1 if play_go(
             your_choose_move=convert_to_no_network(your_choose_move, your_network),
             opponent_choose_move=convert_to_no_network(opponent_choose_move, opponent_network),
@@ -267,15 +241,16 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
         # print(win)
         wins += win
     win_percentage = wins / n
-    print(f"Won {win_percentage:.2f} of {n} games")
+    if verbose:
+        print(f"Won {win_percentage:.2f} of {n} games")
     return win_percentage
 
 
 if __name__ == "__main__":
 
     ## Example workflow, feel free to edit this! ###
-    # file = train()
-    # save_pkl(file, TEAM_NAME)
+    file = train()
+    save_pkl(file, TEAM_NAME)
 
     my_network = load_pkl(TEAM_NAME)
 
@@ -295,13 +270,14 @@ if __name__ == "__main__":
     # )  # <---- Make sure I pass! Or your solution will not work in the tournament!!
 
     play_n_games(
-        n=100,
+        n=NUM_GAMES_FOR_FINAL_TESTING,
         # your_choose_move=choose_move_randomly,
         # opponent_choose_move=choose_move_randomly
         your_choose_move=choose_move,
         your_network=my_network,
         opponent_choose_move=choose_move_randomly,
         opponent_network=None,
+        verbose=True,
     )
 
     # play_go(
