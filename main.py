@@ -30,7 +30,7 @@ NUM_MCTS_FOR_FINAL_TESTING = 50
 NUM_GAMES_FOR_FINAL_TESTING = 100
 
 # Training params
-TRAINING_GAMES_TO_PLAY = 2000 # 500 took like 2 hours, gonna leave overnight
+TRAINING_GAMES_TO_PLAY = 500 # 500 took like 2 hours, gonna leave overnight
 CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES = 50
 LR = 1e-3
 GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
@@ -285,7 +285,7 @@ def play_n_games(n, your_choose_move, your_network, opponent_choose_move, oppone
         ) == 1 else 0
         # print(win)
         wins += win
-        win_percentage = wins / n
+        win_percentage = wins / (i + 1)
         if verbose:
             print(f"So far winning {win_percentage:.2f} of games")
     if verbose:
