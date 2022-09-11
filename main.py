@@ -77,6 +77,8 @@ def copy_network_for_opponent(network):
     torch.save(network.state_dict(), filepath)
     new_network = initialize_network()
     new_network.load_state_dict(torch.load(filepath))
+    # I don't think this is needed but whatever.
+    new_network.clear_cache()
     # Opponent's network is not going to be trained. This probably doesn't matter though.
     new_network.eval()
     return new_network
@@ -197,7 +199,7 @@ def save_checkpoint_during_training(network):
     filename = f"{TEAM_NAME}_training_checkpoint"
     # TODO May need something like this if using GPU, but it would impede training.
     # file.to("cpu")
-    save_pkl(file, filename)
+    save_pkl(network, filename)
 
 
 def opponent_choose_move_for_training(observation: np.ndarray, legal_moves: np.ndarray, env, neural_network: nn.Module) -> int:

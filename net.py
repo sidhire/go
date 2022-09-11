@@ -139,8 +139,11 @@ class Net(nn.Module):
         assert type(legal_moves) == np.ndarray
 
         # Probably don't need to hash legal_moves since it is implicit in the observation.
-        # hash = observation.tobytes() + legal_moves.tobytes()
-        hash = observation.tobytes()
+        # Actually I think 
+        # TODO I'm confused as to why we don't need to know whose turn it is.
+        # Also, I thought it would be fine not to have legal_moves, but I'm getting some "0 is an illegal move" error so I'm just going to add it in.
+        # hash = observation.tobytes()
+        hash = observation.tobytes() + legal_moves.tobytes()
 
         if hash in self.cache:
             # print("Cache HITTTTTTTTTT!")
