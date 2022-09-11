@@ -24,7 +24,7 @@ sys.path.append(str(HERE / "PettingZoo"))
 
 
 # TODO Change this back to 9
-BOARD_SIZE = 9 # 5
+BOARD_SIZE = 5
 ALL_POSSIBLE_MOVES = np.arange(BOARD_SIZE**2 + 1)
 
 # The komi to use is much debated. 7.5 seems to

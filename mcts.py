@@ -1,5 +1,7 @@
 from audioop import add
-from typing import Any, Dict
+from logging import root
+from math import sqrt
+from typing import Any, Dict, Tuple
 
 import numpy as np
 
@@ -26,6 +28,7 @@ def hash_board(board: np.ndarray, is_my_move: bool):
 
 def hash_parent_plus_move(parent_hash: bytes, move_taken_from_parent: int):
     return parent_hash + np.array(move_taken_from_parent).tobytes()
+
 
 def add_to_tree(tree: Dict, parent_plus_move_to_node_tree: Dict, board: np.ndarray, legal_moves:np.ndarray, parent_hash: bytes, move_that_got_you_here: int, node_env: DeltaEnv):
     has_parent = bool(parent_hash)
@@ -62,9 +65,15 @@ def add_to_tree(tree: Dict, parent_plus_move_to_node_tree: Dict, board: np.ndarr
     return board_hash
 
 
+def get_parent_plus_move_hashes_of_all_possible_children(tree, node_hash):
+    node = tree[node_hash]
+    return [hash_parent_plus_move(node_hash, move) for move in node["legal_moves"]]
+
+
 def get_children_hashes(tree: Dict, parent_plus_move_to_node_tree: Dict, node_hash: bytes):
     node = tree[node_hash]
-    children_hashes_in_parent_plus_move_to_node_tree = [hash_parent_plus_move(node_hash, move) for move in node["legal_moves"]]
+    # children_hashes_in_parent_plus_move_to_node_tree = [hash_parent_plus_move(node_hash, move) for move in node["legal_moves"]]
+    children_hashes_in_parent_plus_move_to_node_tree = get_parent_plus_move_hashes_of_all_possible_children(tree, node_hash)
 
     children = []
     for hash in children_hashes_in_parent_plus_move_to_node_tree:
@@ -75,7 +84,9 @@ def get_children_hashes(tree: Dict, parent_plus_move_to_node_tree: Dict, node_ha
     return children_hashes
 
 
-def select_node_randomly(tree: Dict, parent_plus_move_to_node_tree: Dict, root_hash: bytes):
+# TODO Later code relies on select never returning a node that is fully expanded. So I need to preserve that here. I don't think this function does that, but I'm not using it any more so it doesn't matter.
+# def select_node_randomly(tree: Dict, parent_plus_move_to_node_tree: Dict, root_hash: bytes):
+def select_node_randomly(tree: Dict, parent_plus_move_to_node_tree: Dict, root_hash: bytes, network: nn.Module):
     PROBABILITY_OF_PICKING_SELF = 0.5
     node_hash = root_hash
     while True:
@@ -99,8 +110,116 @@ def select_node_randomly(tree: Dict, parent_plus_move_to_node_tree: Dict, root_h
         # pick a child randomly (since it does have children)
         node_hash = random.choice(children_hashes)
 
+    # TODO This function needs to be changed to not return nodes that have been fully expanded.
     node["selected_count"] += 1
-    return node_hash
+    return node_hash, None
+
+
+def select_node_agz_uct(tree: Dict, parent_plus_move_to_node_tree: Dict, root_hash: bytes, network: nn.Module) -> Tuple[bytes, int]: # returns node_hash
+    # NOTE This is my bastardized version of the algo. Namely, I don't get that we are adding new nodes in both the select and expand stages.
+    # Basically the change I am making is that I'm not making it possible to select a node that isn't already in the tree, even though it looks like they are doing that here: https://calm-silver-e6f.notion.site/11-AlphaGo-071757aa392941ad8177262ce065082b#534a0dfab800413d888cfe87d6ef2279
+
+    node_hash = root_hash
+    while True:
+        node = tree[node_hash]
+
+        is_terminal = node["is_terminal"]
+        if is_terminal:
+            # return None # TODO This seems bad.
+            break # TODO This also seems bad...
+
+        # children_hashes = get_children_hashes(tree, parent_plus_move_to_node_tree, node_hash)
+
+        # This part is my key modification. Iterate through all possible actions, not just ones that are already in your tree. If your (argmax Q + u) business says to pick an action that's not already in the tree, that seems like a good candidate for expansion, so return it as a hint for the expand step. Then, expand will use that hint instead of running itself.
+
+        # Get all possible children (i.e. legal moves)
+        # For each, calculate its Q+u
+        # If the move with the highest Q+u is in the tree, set node to that and loop again.
+        # Else return the parent and provide this move as a hint for expansion.
+
+        legal_moves = node["legal_moves"]
+        children_hashes_in_parent_plus_move_to_node_tree = get_parent_plus_move_hashes_of_all_possible_children(tree, node_hash)
+        Q_plus_u_list = []
+
+        C_PUCT = 5
+
+        for i, move in enumerate(legal_moves):
+            child_node_in_parent_plus_move_to_node_tree = parent_plus_move_to_node_tree.get(children_hashes_in_parent_plus_move_to_node_tree[i])
+            parent_node_temp = node
+            child_node_temp = child_node_in_parent_plus_move_to_node_tree
+
+            Q = child_node_temp["total_value"] / child_node_temp["updated_count"] if child_node_temp else parent_node_temp["total_value"] / parent_node_temp["updated_count"] # Default to the Q of the parent if the node doesn't exist in the tree.
+
+            if child_node_temp:
+                P_dist, _ = network.forward_with_cache(child_node_temp["board"], child_node_temp["legal_moves"])
+                P = P_dist[move]
+            else:
+                # TODO Default P if the child is not in the tree, in which case we don't have its board. I don't know if this is bad.
+                P = 1
+
+            N = parent_node_temp["updated_count"]
+            n = child_node_temp["updated_count"] if child_node_temp else 0
+
+            u = C_PUCT * P * sqrt(N) / (1 + n)
+            Q_plus_u_list.append(Q + u)
+
+        max_Q_plus_u = max(Q_plus_u_list)
+        max_idx = Q_plus_u_list.index(max_Q_plus_u)
+        move = legal_moves[max_idx]
+        hash_in_parent_plus_move_to_node_tree = children_hashes_in_parent_plus_move_to_node_tree[max_idx]
+
+        correct_len = len(legal_moves)
+        assert len(children_hashes_in_parent_plus_move_to_node_tree) == correct_len
+        assert len(Q_plus_u_list) == correct_len
+
+        selected_node_is_in_tree = hash_in_parent_plus_move_to_node_tree in parent_plus_move_to_node_tree
+        move_hint_for_expansion = move
+        if not selected_node_is_in_tree:
+            return node_hash, move_hint_for_expansion
+        
+        node_in_parent_plus_move_to_node_tree = parent_plus_move_to_node_tree[hash_in_parent_plus_move_to_node_tree]
+        node_hash = node_in_parent_plus_move_to_node_tree["hash"] # Yes the parent_plus_move_to_node_tree stores the hash in the regular tree but calls it "hash". Yes this is janky.
+        node = tree[node_hash]
+    
+    # NOTE Later code relies on select never returning a node that is fully expanded. So I need to preserve that here. I think my logic does preserve that without doing anything special.
+
+    return node_hash, None
+
+
+# Returns the node that mcts should evaluate
+def expand(node_hash, move_hint_that_expand_should_use, tree, parent_plus_move_to_node_tree) -> bytes: # returns node_to_evaluate_hash
+    node = tree[node_hash]
+
+    is_terminal = node["is_terminal"]
+    if is_terminal:
+        return node_hash
+    
+    moves_not_in_tree = None
+
+    moves_not_in_tree = [move for move in node["legal_moves"] if hash_parent_plus_move(node_hash, move) not in parent_plus_move_to_node_tree]
+    is_fully_expanded = not moves_not_in_tree
+    assert not is_fully_expanded, "Select should never yield a node that is fully expanded. I may not have made that change yet."
+    # TODO The lines above for this assertion can be commented out if it doesn't fire after a while. Since it does degrade performance.
+
+    if move_hint_that_expand_should_use:
+        move = move_hint_that_expand_should_use
+    else:
+        if moves_not_in_tree == None:
+            moves_not_in_tree = [move for move in node["legal_moves"] if hash_parent_plus_move(node_hash, move) not in parent_plus_move_to_node_tree]
+        # TODO Use the policy to pick which node to expand to instead of doing it randomly.
+        move = random.choice(moves_not_in_tree)
+    
+    new_env = transition_function(node["node_env"], move)
+    node_to_evaluate_hash = add_to_tree(
+        tree=tree,
+        parent_plus_move_to_node_tree=parent_plus_move_to_node_tree,
+        board=new_env.observation,
+        legal_moves=new_env.legal_moves,
+        parent_hash=node_hash,
+        move_that_got_you_here=move,
+        node_env=new_env,
+    )
+    return node_to_evaluate_hash 
 
 
 def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv, network: nn.Module):
@@ -127,7 +246,8 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
 
         # SELECT
         # TODO Use actual PUCT instead of random selection.
-        node_hash = select_node_randomly(tree, parent_plus_move_to_node_tree, root_hash)
+        # node_hash, move_hint_that_expand_should_use = select_node_randomly(tree, parent_plus_move_to_node_tree, root_hash, network)
+        node_hash, move_hint_that_expand_should_use = select_node_agz_uct(tree, parent_plus_move_to_node_tree, root_hash, network)
         if not node_hash:
             print("Did not pick a node for mcts")
             continue
@@ -136,29 +256,35 @@ def mcts(n: int, observation: np.ndarray, legal_moves: np.ndarray, env: DeltaEnv
         # EXPAND
         # If the selected node is fully expanded, don't expand it
 
-        # TODO This line may error if terminal nodes don't have a legal_moves array...idk if they do. If it does error, just check for it being a terminal node ahead of this.
-        moves_not_in_tree = [move for move in node["legal_moves"] if hash_parent_plus_move(node_hash, move) not in parent_plus_move_to_node_tree]
-
-        is_fully_expanded = not moves_not_in_tree
-        is_terminal = node["is_terminal"]
-        if is_fully_expanded or is_terminal:
-            node_to_evaluate_hash = node_hash
-        else:
-            # Add new node to the tree. It's the one you want to evaluate.
-            move = random.choice(moves_not_in_tree)
-            new_env = transition_function(node["node_env"], move)
-            node_to_evaluate_hash = add_to_tree(
-                tree=tree,
-                parent_plus_move_to_node_tree=parent_plus_move_to_node_tree,
-                board=new_env.observation,
-                legal_moves=new_env.legal_moves,
-                parent_hash=node_hash,
-                move_that_got_you_here=move,
-                node_env=new_env,
-            )
-
+        node_to_evaluate_hash = expand(node_hash, move_hint_that_expand_should_use, tree, parent_plus_move_to_node_tree)
         assert node_to_evaluate_hash
         node_to_evaluate = tree[node_to_evaluate_hash]
+
+        # # OLD EXPAND CODE THAT I HAVE MOVED INTO A FUNCTION
+
+        # # TODO This line may error if terminal nodes don't have a legal_moves array...idk if they do. If it does error, just check for it being a terminal node ahead of this.
+        # moves_not_in_tree = [move for move in node["legal_moves"] if hash_parent_plus_move(node_hash, move) not in parent_plus_move_to_node_tree]
+
+        # is_fully_expanded = not moves_not_in_tree
+        # is_terminal = node["is_terminal"]
+        # if is_fully_expanded or is_terminal:
+        #     node_to_evaluate_hash = node_hash
+        # else:
+        #     # Add new node to the tree. It's the one you want to evaluate.
+        #     move = random.choice(moves_not_in_tree)
+        #     new_env = transition_function(node["node_env"], move)
+        #     node_to_evaluate_hash = add_to_tree(
+        #         tree=tree,
+        #         parent_plus_move_to_node_tree=parent_plus_move_to_node_tree,
+        #         board=new_env.observation,
+        #         legal_moves=new_env.legal_moves,
+        #         parent_hash=node_hash,
+        #         move_that_got_you_here=move,
+        #         node_env=new_env,
+        #     )
+
+        # assert node_to_evaluate_hash
+        # node_to_evaluate = tree[node_to_evaluate_hash]
 
         # TODO Not sure if we should break or something if it is a terminal node.
 
