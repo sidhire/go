@@ -30,7 +30,7 @@ NUM_MCTS_FOR_FINAL_TESTING = 50
 NUM_GAMES_FOR_FINAL_TESTING = 100
 
 # Training params
-TRAINING_GAMES_TO_PLAY = 500
+TRAINING_GAMES_TO_PLAY = 2000 # 500 took like 2 hours, gonna leave overnight
 CHECK_WHETHER_TO_REPLACE_OPPONENT_EVERY_N_GAMES = 50
 LR = 1e-3
 GAMES_TO_PLAY_WHEN_SEEING_IF_YOURE_BETTER_THAN_OPPONENT = 100
@@ -172,7 +172,7 @@ def train(existing_network=None):
                 print(f"MOVES IN MIDDLE OF GAME: {moves_in_game}")
 
 
-        print(f"MOVES AT END OF GAME: {moves_in_game} (reward {reward})")
+        # print(f"MOVES AT END OF GAME: {moves_in_game} (reward {reward})")
         if moves_in_game > 1000:
             long_games_count += 1
         # TODO Consider breaking if MOVES IN GAME exceeds like 200 or 500
@@ -187,8 +187,7 @@ def train(existing_network=None):
         # Assert it is nonnegative (so we know whether to add a minus sign)
         assert p_loss >= 0
         assert v_loss >= 0
-        params = torch.tensor(0.) # TODO SOMEHOW GET THE PARAMS
-        regularization_term = REGULARIZATION_PARAMETER * params.square().sum()
+        regularization_term = REGULARIZATION_PARAMETER * nn.utils.parameters_to_vector(network.parameters()).square().sum()
         loss = p_loss + v_loss + regularization_term
 
         opt.zero_grad()
@@ -301,11 +300,12 @@ if __name__ == "__main__":
     existing_network = None if TRAIN_FROM_SCRATCH else load_pkl(TEAM_NAME)
 
     ## Example workflow, feel free to edit this! ###
-    # file = train(existing_network)
+    file = train(existing_network)
     # file.to("cpu") # TODO May have to change this
-    # save_pkl(file, TEAM_NAME)
+    save_pkl(file, TEAM_NAME)
 
-    my_network = load_pkl(TEAM_NAME + "_training_checkpoint")
+    # my_network = load_pkl(TEAM_NAME + "_training_checkpoint")
+    my_network = load_pkl(TEAM_NAME)
     my_network.to(device) # TODO May have to change this for submission
 
     # Code below plays a single game against a random
